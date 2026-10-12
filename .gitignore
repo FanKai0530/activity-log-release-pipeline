@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+release-bundle.zip
+release-bundle.sha256
+release-version.txt
+agent-review.md

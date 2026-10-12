@@ -1,0 +1,174 @@
+name: Activity log release pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Compile source
+        run: python -m compileall -q scripts
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Build one immutable release bundle
+        id: version
+        run: |
+          python scripts/build_release.py
+          echo "version=$(cat release-version.txt)" >> "$GITHUB_OUTPUT"
+          sha256sum release-bundle.zip | tee release-bundle.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: |
+            release-bundle.zip
+            release-bundle.sha256
+            release-version.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+      - name: Publish dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PREFIX: ${{ vars.BUILD_TAG }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
+          VERSION: ${{ needs.build.outputs.version }}
+          TARGET: ${{ github.sha }}
+        run: |
+          test "$PREFIX" = dev
+          test -n "$NOTE"
+          TAG="$PREFIX-v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "Release $TAG already exists" >&2; exit 1; fi
+          trap 'gh release delete "$TAG" --yes --cleanup-tag || true' ERR
+          printf '%s\n\nBUILD_TAG=%s\nVersion=%s\nCommit=%s\n' "$NOTE" "$PREFIX" "$VERSION" "$TARGET" > notes.md
+          gh release create "$TAG" release-bundle.zip release-bundle.sha256 --target "$TARGET" --title "$TAG" --notes-file notes.md --prerelease
+
+  deploy-staging:
+    needs: [build, deploy-dev]
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+      - name: Publish staging release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PREFIX: ${{ vars.BUILD_TAG }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
+          VERSION: ${{ needs.build.outputs.version }}
+          TARGET: ${{ github.sha }}
+        run: |
+          test "$PREFIX" = staging
+          test -n "$NOTE"
+          TAG="$PREFIX-v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "Release $TAG already exists" >&2; exit 1; fi
+          trap 'gh release delete "$TAG" --yes --cleanup-tag || true' ERR
+          printf '%s\n\nBUILD_TAG=%s\nVersion=%s\nCommit=%s\n' "$NOTE" "$PREFIX" "$VERSION" "$TARGET" > notes.md
+          gh release create "$TAG" release-bundle.zip release-bundle.sha256 --target "$TARGET" --title "$TAG" --notes-file notes.md --prerelease
+
+  ai-release-review:
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Draft release review with bounded read-only tools
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: python scripts/release_review_agent.py
+      - name: Show draft to production reviewer
+        run: cat agent-review.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-review
+          path: agent-review.md
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy-production:
+    needs: [build, deploy-staging, ai-release-review]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-review
+      - name: Verify the same tested artifact
+        run: sha256sum --check release-bundle.sha256
+      - name: Publish production release after environment approval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PREFIX: ${{ vars.BUILD_TAG }}
+          NOTE: ${{ vars.RELEASE_NOTE }}
+          VERSION: ${{ needs.build.outputs.version }}
+          TARGET: ${{ github.sha }}
+        run: |
+          test "$PREFIX" = prod
+          test -n "$NOTE"
+          TAG="$PREFIX-v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "Release $TAG already exists" >&2; exit 1; fi
+          trap 'gh release delete "$TAG" --yes --cleanup-tag || true' ERR
+          printf '%s\n\nBUILD_TAG=%s\nVersion=%s\nCommit=%s\n\nAI review is attached as a draft for audit; the reviewer approved this environment deployment.\n' "$NOTE" "$PREFIX" "$VERSION" "$TARGET" > notes.md
+          gh release create "$TAG" release-bundle.zip release-bundle.sha256 agent-review.md --target "$TARGET" --title "$TAG" --notes-file notes.md
