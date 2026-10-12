@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Choose the next production patch version and package the existing action."""
+"""Choose the next unused release patch version and package the existing action."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import re
 import subprocess
 from zipfile import ZIP_DEFLATED, ZipFile
 
-TAG_PATTERN = re.compile(r"^prod-v(\d+)\.(\d+)\.(\d+)$")
+TAG_PATTERN = re.compile(r"^(?:dev|staging|prod)-v(\d+)\.(\d+)\.(\d+)$")
 PACKAGE_FILES = ("README.md", "scripts/update_readme.py")
 
 
@@ -23,7 +23,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path("release-bundle.zip"))
     args = parser.parse_args()
-    tags = subprocess.check_output(["git", "tag", "--list", "prod-v*"], text=True).splitlines()
+    tags = subprocess.check_output(["git", "tag", "--list", "*-v*"], text=True).splitlines()
     version = next_version(tags)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(args.output, "w", ZIP_DEFLATED) as archive:

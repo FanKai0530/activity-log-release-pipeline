@@ -9,7 +9,7 @@ The activity-log idea comes from [TheDanniCraft/activity-log](https://github.com
 A push to `main` or **Run workflow** starts:
 
 1. `test`: Python 3.11, 3.12, and 3.13 run unit tests and compile the source.
-2. `build`: read the highest `prod-vMAJOR.MINOR.PATCH` tag, increment the patch, package one ZIP, and record its SHA-256 digest.
+2. `build`: read the highest release tag among `dev-v*`, `staging-v*`, and `prod-v*`, increment the patch, package one ZIP, and record its SHA-256 digest. This also avoids tag collisions after an interrupted pipeline.
 3. `deploy-dev`: create a prerelease from that ZIP.
 4. `deploy-staging`: promote the same ZIP to a staging prerelease.
 5. `ai-release-review`: a read-only OpenAI agent lists commits and inspects allowlisted diffs. Its draft is saved as an Actions artifact and job summary.

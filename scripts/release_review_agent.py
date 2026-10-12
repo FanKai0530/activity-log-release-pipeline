@@ -64,9 +64,12 @@ def main() -> int:
     calls = 0
     report = ""
     while calls <= 4:
+        choice = ({"type": "function", "name": "list_commits"} if calls == 0
+                  else "none" if calls == 4 else "auto")
         response = api_call({"model": model, "instructions": PROMPT, "input": inputs,
-                             "tools": TOOLS, "tool_choice": "required" if calls == 0 else "auto",
-                             "max_output_tokens": 1400, "store": False})
+                             "tools": TOOLS, "tool_choice": choice,
+                             "parallel_tool_calls": False,
+                             "max_output_tokens": 3000, "store": False})
         output = response.get("output", [])
         inputs.extend(output)
         function_calls = [item for item in output if item.get("type") == "function_call"]
@@ -79,6 +82,7 @@ def main() -> int:
             if calls > 4:
                 raise RuntimeError("Agent exceeded the four-call read-only tool budget")
             name = item.get("name")
+            print(f"Read-only tool call {calls}/4: {name}", flush=True)
             arguments = json.loads(item.get("arguments", "{}"))
             if name == "list_commits":
                 result = {"base": base, "commits": commits}
