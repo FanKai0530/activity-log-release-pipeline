@@ -49,15 +49,15 @@ class ReleaseBundleTests(unittest.TestCase):
                 (extracted / "VERSION").read_text(encoding="utf-8"),
                 VERSION.read_text(encoding="utf-8"),
             )
+            result = subprocess.run(
+                [sys.executable, "scripts/update_readme.py", "--repository", "FanKai0530/activity-log-release-pipeline", "--check"],
+                cwd=extracted,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             if test_env == "staging":
-                result = subprocess.run(
-                    [sys.executable, "scripts/update_readme.py", "--repository", "FanKai0530/activity-log-release-pipeline", "--check"],
-                    cwd=extracted,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("Activity markers are valid", result.stdout)
             else:
                 self.assertRegex(
@@ -69,4 +69,3 @@ class ReleaseBundleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
