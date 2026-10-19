@@ -3,6 +3,7 @@
 import hashlib
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -24,7 +25,8 @@ class ReleaseBundleTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(ARTIFACT.read_bytes()).hexdigest(), digest)
 
     def test_downloaded_bundle_runs_in_isolation(self):
-        self.assertIn(os.environ.get("TEST_ENV"), {"staging", "prod"})
+        test_env = os.environ.get("TEST_ENV")
+        self.assertIn(test_env, {"staging", "prod"})
         with tempfile.TemporaryDirectory() as directory:
             with ZipFile(ARTIFACT) as archive:
                 self.assertEqual(
@@ -32,21 +34,39 @@ class ReleaseBundleTests(unittest.TestCase):
                     {"README.md", "scripts/update_readme.py", "VERSION"},
                 )
                 archive.extractall(directory)
+                if test_env == "prod":
+                    self.assertIsNone(archive.testzip(), "Production bundle has a corrupt member")
+                    self.assertTrue(
+                        all(not (member.flag_bits & 1) for member in archive.infolist()),
+                        "Production bundle must not contain encrypted members",
+                    )
+                    self.assertTrue(
+                        all(not stat.S_ISLNK(member.external_attr >> 16) for member in archive.infolist()),
+                        "Production bundle must not contain symbolic links",
+                    )
             extracted = Path(directory)
             self.assertEqual(
                 (extracted / "VERSION").read_text(encoding="utf-8"),
                 VERSION.read_text(encoding="utf-8"),
             )
-            result = subprocess.run(
-                [sys.executable, "scripts/update_readme.py", "--repository", "FanKai0530/activity-log-release-pipeline", "--check"],
-                cwd=extracted,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("Activity markers are valid", result.stdout)
+            if test_env == "staging":
+                result = subprocess.run(
+                    [sys.executable, "scripts/update_readme.py", "--repository", "FanKai0530/activity-log-release-pipeline", "--check"],
+                    cwd=extracted,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Activity markers are valid", result.stdout)
+            else:
+                self.assertRegex(
+                    (extracted / "VERSION").read_text(encoding="utf-8").strip(),
+                    r"^\d+\.\d+\.\d+$",
+                    "Production requires a final semantic version",
+                )
 
 
 if __name__ == "__main__":
     unittest.main()
+
