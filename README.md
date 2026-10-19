@@ -8,14 +8,17 @@ The activity-log idea comes from [TheDanniCraft/activity-log](https://github.com
 
 A push to `main` or **Run workflow** starts:
 
-1. `test`: Python 3.11, 3.12, and 3.13 run unit tests and compile the source.
-2. `build`: read the highest release tag among `dev-v*`, `staging-v*`, and `prod-v*`, increment the patch, package one ZIP, and record its SHA-256 digest. This also avoids tag collisions after an interrupted pipeline.
-3. `deploy-dev`: create a prerelease from that ZIP.
-4. `deploy-staging`: promote the same ZIP to a staging prerelease.
-5. `ai-release-review`: a read-only OpenAI agent lists commits and inspects allowlisted diffs. Its draft is saved as an Actions artifact and job summary.
-6. `deploy-production`: waits for the required reviewer, verifies the ZIP digest, and publishes the production release with the AI draft attached.
+1. `build`: read the highest release tag among `dev-v*`, `staging-v*`, and `prod-v*`, increment the patch, package one ZIP, and record its SHA-256 digest.
+2. `test-unit`: after build, Python 3.11, 3.12, and 3.13 each download and verify the ZIP, run real unit tests, enforce at least 80% coverage of the updater and builder, and upload JUnit plus coverage XML reports.
+3. `test-integration`: after all unit matrix jobs pass, staging and prod configurations each download the same ZIP and run tests against its checksum, contents, version, and packaged CLI. JUnit reports are uploaded.
+4. `deploy-dev`: runs only after both test phases pass and creates a prerelease from the tested ZIP.
+5. `deploy-staging`: promotes the same ZIP to a staging prerelease.
+6. `ai-release-review`: a read-only OpenAI agent lists commits and inspects allowlisted diffs. Its draft is saved as an Actions artifact and job summary.
+7. `deploy-production`: waits for the required reviewer, verifies the ZIP digest, and publishes the production release with the AI draft attached.
 
 Each stage uses a tag such as `dev-v1.0.0`, `staging-v1.0.0`, or `prod-v1.0.0`. The next successful production run automatically chooses `1.0.1`. A failed release creation is cleaned up; an existing release is never overwritten.
+
+For a controlled proof of the release gate, manually dispatch the workflow with `demonstrate_failed_test=true`. The integration job runs a clearly labeled intentional failing test after the real integration tests. The job fails and all three release jobs must show **skipped**. This option is false for pushes and ordinary manual runs.
 
 ## Required repository settings
 
@@ -34,9 +37,11 @@ The repository owner is currently the required production reviewer because no se
 ## Running locally
 
 ```sh
-python -m unittest discover -s tests -v
+python -m unittest tests.test_update_readme tests.test_build_release -v
 python scripts/update_readme.py --repository FanKai0530/activity-log-release-pipeline --check
 python scripts/build_release.py
+# After creating release-bundle.sha256 and setting TEST_ENV=staging:
+python -m unittest tests.test_integration -v
 ```
 
 ## AI agent safety and evaluation
@@ -47,7 +52,7 @@ To judge whether the agent helps, compare reviewer time and missed or false risk
 
 ## Submission evidence
 
-The PDF report should include genuine screenshots of the three environment pages, production reviewer rule, the Actions run and agent draft, human approval, and all three release tags. No production success should be claimed until the reviewer has approved the pending job. The in-class quiz will ask about the choices made here.
+The PDF report should include genuine screenshots of a passing run, unit and integration test logs, the coverage and JUnit artifacts, a deliberately failing run with skipped releases, the three environment pages, production reviewer rule, the **Waiting for review** state before approval, approval event, and all three release pages. Show each release job downloading the same named build artifact. No production success should be claimed until the reviewer has approved the pending job. The in-class quiz will ask about the choices made here.
 
 ## Recent activity
 
